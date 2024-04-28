@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/csv"
 	"fmt"
 	"github.com/spf13/cobra"
 	"os/exec"
@@ -46,7 +48,7 @@ var rootCmd = &cobra.Command{
 			authors = append(authors, author)
 		}
 
-		fmt.Println(GetOutput(Sort(authors, LINES), TABULAR))
+		fmt.Println(GetOutput(Sort(authors, LINES), CSV))
 	},
 }
 
@@ -281,12 +283,51 @@ func Sort(authors []Author, sortType SortType) []Author {
 }
 
 func GetOutput(authors []Author, outputType OutputType) string {
-	builder := strings.Builder{}
-
-	builder.WriteString("Name         Lines Commits Files\n")
-	for _, author := range authors {
-		builder.WriteString(fmt.Sprintf("%s		%d	%d	%d\n", author.name, author.lines, author.commits, len(author.files)))
+	switch outputType {
+	case TABULAR:
+		return GetTabular(authors)
+	case CSV:
+		return GetCSV(authors)
 	}
 
-	return builder.String()
+	return ""
+}
+
+func GetTabular(authors []Author) string {
+	return ""
+	//buffer := new(bytes.Buffer)
+	//writer := tabwriter.NewWriter(buffer, 0, 0, 1, ' ', tabwriter.Debug)
+	//writer.Write(make([]string, 0))
+
+	//builder := strings.Builder{}
+	//builder.WriteString("Name         Lines Commits Files")
+	//for _, author := range authors {
+	//	builder.WriteString(fmt.Sprintf("%s		%d	%d	%d\n", author.name, author.lines, author.commits, len(author.files)))
+	//}
+	//
+	//return builder.String()
+}
+
+func GetCSV(authors []Author) string {
+	buffer := new(bytes.Buffer)
+	writer := csv.NewWriter(buffer)
+	err := writer.Write([]string{"Name", "Lines", "Commits", "Files"})
+	if err != nil {
+		return ""
+	}
+
+	for _, author := range authors {
+		err := writer.Write([]string{author.name, strconv.Itoa(author.lines), strconv.Itoa(author.commits), strconv.Itoa(len(author.files))})
+		if err != nil {
+			return ""
+		}
+	}
+
+	writer.Flush()
+
+	if err := writer.Error(); err != nil {
+		return ""
+	}
+
+	return strings.TrimSuffix(buffer.String(), "\n")
 }
