@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"github.com/spf13/cobra"
 	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 )
 
 var (
@@ -20,6 +22,7 @@ var (
 )
 
 var (
+	DEFAULT SortType = SortType{name: "default"}
 	LINES   SortType = SortType{name: "lines"}
 	COMMITS SortType = SortType{name: "commits"}
 	FILES   SortType = SortType{name: "files"}
@@ -37,6 +40,29 @@ var rootCmd = &cobra.Command{
 
 		//fmt.Println()
 
+		flagFormat, err := cmd.Flags().GetString("format")
+		if err != nil {
+			return
+		}
+
+		var format OutputType
+		switch flagFormat {
+		case "tabular":
+			format = TABULAR
+
+		case "csv":
+			format = CSV
+
+		case "json":
+			format = JSON
+
+		case "json-lines":
+			format = JSON_LINES
+
+		default:
+			return
+		}
+
 		files, err := GitFiles(repository)
 		if err != nil {
 			fmt.Println(err.Error())
@@ -48,7 +74,7 @@ var rootCmd = &cobra.Command{
 			authors = append(authors, author)
 		}
 
-		fmt.Println(GetOutput(Sort(authors, LINES), CSV))
+		fmt.Println(GetOutput(Sort(authors, DEFAULT), format))
 	},
 }
 
@@ -263,18 +289,49 @@ func parse(files []string) map[string]Author {
 
 func Sort(authors []Author, sortType SortType) []Author {
 	switch sortType {
+	case DEFAULT:
+		sort.Slice(authors, func(i, j int) bool {
+			authorI, authorJ := authors[i], authors[j]
+
+			if authorI.lines == authorJ.lines {
+				if authorI.commits == authorJ.commits {
+					if len(authorI.files) == len(authorJ.files) {
+						return strings.Compare(authorI.name, authorJ.name) < 0
+					}
+
+					return len(authorI.files) > len(authorJ.files)
+				}
+
+				return authorI.commits > authorJ.commits
+			}
+
+			return authorI.lines > authorJ.lines
+		})
+
 	case COMMITS:
 		sort.Slice(authors, func(i, j int) bool {
+			if authors[i].commits == authors[j].commits {
+				return strings.Compare(authors[i].name, authors[j].name) < 0
+			}
+
 			return authors[i].commits > authors[j].commits
 		})
 
 	case FILES:
 		sort.Slice(authors, func(i, j int) bool {
+			if len(authors[i].files) == len(authors[j].files) {
+				return strings.Compare(authors[i].name, authors[j].name) < 0
+			}
+
 			return len(authors[i].files) > len(authors[j].files)
 		})
 
 	case LINES:
 		sort.Slice(authors, func(i, j int) bool {
+			if authors[i].lines == authors[j].lines {
+				return strings.Compare(authors[i].name, authors[j].name) < 0
+			}
+
 			return authors[i].lines > authors[j].lines
 		})
 	}
@@ -288,24 +345,30 @@ func GetOutput(authors []Author, outputType OutputType) string {
 		return GetTabular(authors)
 	case CSV:
 		return GetCSV(authors)
+	case JSON:
+		return GetJson(authors)
+	case JSON_LINES:
+		return GetJsonLines(authors)
 	}
 
 	return ""
 }
 
 func GetTabular(authors []Author) string {
-	return ""
-	//buffer := new(bytes.Buffer)
-	//writer := tabwriter.NewWriter(buffer, 0, 0, 1, ' ', tabwriter.Debug)
+	//return ""
+	buffer := new(bytes.Buffer)
+	writer := tabwriter.NewWriter(buffer, 0, 0, 1, ' ', tabwriter.DiscardEmptyColumns)
 	//writer.Write(make([]string, 0))
 
-	//builder := strings.Builder{}
 	//builder.WriteString("Name         Lines Commits Files")
-	//for _, author := range authors {
-	//	builder.WriteString(fmt.Sprintf("%s		%d	%d	%d\n", author.name, author.lines, author.commits, len(author.files)))
-	//}
-	//
-	//return builder.String()
+	fmt.Fprintf(writer, fmt.Sprintf("Name\tLines\tCommits\tFiles\n"))
+	for _, author := range authors {
+		fmt.Fprintf(writer, fmt.Sprintf("%s\t%d\t%d\t%d\n", author.name, author.lines, author.commits, len(author.files)))
+	}
+
+	writer.Flush()
+
+	return buffer.String()
 }
 
 func GetCSV(authors []Author) string {
@@ -330,4 +393,46 @@ func GetCSV(authors []Author) string {
 	}
 
 	return strings.TrimSuffix(buffer.String(), "\n")
+}
+
+func GetJsonLines(authors []Author) string {
+	builder := strings.Builder{}
+	for _, author := range authors {
+		lineMap := map[string]string{
+			"name":    author.name,
+			"lines":   strconv.Itoa(author.lines),
+			"commits": strconv.Itoa(author.commits),
+			"files":   strconv.Itoa(len(author.files)),
+		}
+
+		jsonMap, _ := json.Marshal(lineMap)
+		builder.WriteString(string(jsonMap))
+		builder.WriteString("\n")
+	}
+
+	return builder.String()
+}
+
+func GetJson(authors []Author) string {
+	builder := strings.Builder{}
+	builder.WriteString("[")
+	for i, author := range authors {
+		lineMap := map[string]string{
+			"name":    author.name,
+			"lines":   strconv.Itoa(author.lines),
+			"commits": strconv.Itoa(author.commits),
+			"files":   strconv.Itoa(len(author.files)),
+		}
+
+		jsonMap, _ := json.Marshal(lineMap)
+		builder.WriteString(string(jsonMap))
+
+		if i != len(authors)-1 {
+			builder.WriteString(",")
+		}
+	}
+
+	builder.WriteString("]")
+
+	return builder.String()
 }
