@@ -2,8 +2,13 @@
 
 package main
 
-import "gitlab.com/slon/shad-go/gitfame/cmd/gitfame/cmd"
+import (
+	"gitlab.com/slon/shad-go/gitfame/cmd/gitfame/cmd"
+	"os"
+)
 
 func main() {
-	cmd.Execute()
+	if err := cmd.Execute(); err != nil {
+		os.Exit(1)
+	}
 }

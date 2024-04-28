@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/spf13/cobra"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,6 +23,25 @@ var (
 	JSON_LINES OutputType = OutputType{name: "json-lines"}
 )
 
+func GetOutputType(name string) (OutputType, error) {
+	switch name {
+	case TABULAR.name:
+		return TABULAR, nil
+
+	case CSV.name:
+		return CSV, nil
+
+	case JSON.name:
+		return JSON, nil
+
+	case JSON_LINES.name:
+		return JSON_LINES, nil
+
+	default:
+		return TABULAR, errors.New("illegal type")
+	}
+}
+
 var (
 	DEFAULT SortType = SortType{name: "default"}
 	LINES   SortType = SortType{name: "lines"}
@@ -28,53 +49,80 @@ var (
 	FILES   SortType = SortType{name: "files"}
 )
 
+func GetSortType(name string) (SortType, error) {
+	switch name {
+	case DEFAULT.name:
+		return DEFAULT, nil
+
+	case LINES.name:
+		return LINES, nil
+
+	case COMMITS.name:
+		return COMMITS, nil
+
+	case FILES.name:
+		return FILES, nil
+
+	default:
+		return DEFAULT, errors.New("illegal type")
+	}
+}
+
 var (
-	repository string
+	repository    string
+	revision      string
+	format        string
+	order_by      string
+	use_committer bool
+	exclude       []string
+	//restrict_to   []string
 )
 
 var rootCmd = &cobra.Command{
 	Use:   "gitfame",
 	Short: "This program prints the statistics of the author of the git repository",
 	Long:  "This program prints the statistics of the author of the git repository",
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
+		//repository = filepath.FromSlash(repository)
+		//fmt.Println(repository)
+		//repository = strings.Replace(repository, "./", "", 1)
 
-		//fmt.Println()
-
-		flagFormat, err := cmd.Flags().GetString("format")
+		excludeFlag, err := cmd.Flags().GetString("exclude")
 		if err != nil {
-			return
+			return err
 		}
 
-		var format OutputType
-		switch flagFormat {
-		case "tabular":
-			format = TABULAR
+		exclude = strings.Split(excludeFlag, ",")
 
-		case "csv":
-			format = CSV
-
-		case "json":
-			format = JSON
-
-		case "json-lines":
-			format = JSON_LINES
-
-		default:
-			return
-		}
-
-		files, err := GitFiles(repository)
+		files, err := GitFiles(repository, revision)
 		if err != nil {
-			fmt.Println(err.Error())
-			panic(err)
+			return err
 		}
+
+		formatType, err := GetOutputType(format)
+		if err != nil {
+			return err
+		}
+
+		sortType, err := GetSortType(order_by)
+		if err != nil {
+			return err
+		}
+		//restrictToFlag, err := cmd.Flags().GetString("restrict_to")
+		//if err != nil {
+		//	return err
+		//}
+
+		//restrict_to = strings.Split(restrictToFlag, ",")
 
 		authors := make([]Author, 0)
 		for _, author := range parse(files) {
 			authors = append(authors, author)
 		}
 
-		fmt.Println(GetOutput(Sort(authors, DEFAULT), format))
+		fmt.Println(GetOutput(Sort(authors, sortType), formatType))
+
+		return nil
 	},
 }
 
@@ -83,19 +131,20 @@ func Execute() error {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&repository, "repository", "./", "The path to the Git repository")
-	rootCmd.PersistentFlags().String("revision", "HEAD", "A pointer to a commit")
-	rootCmd.PersistentFlags().String("order-by", "lines", "The method of sorting the results; one of: lines (default), commits, files")
-	rootCmd.PersistentFlags().Bool("use-committer", true, "A Boolean flag that replaces the author (default) with the committer in the calculations")
-	rootCmd.PersistentFlags().String("format", "tabular", "Output format; one of tabular (default), csv, json, json-lines")
-	rootCmd.PersistentFlags().String("extensions", "", "A list of extensions that narrows down the list of files in the calculation; many restrictions are separated by commas, for example, '.go,.md'")
-	rootCmd.PersistentFlags().String("languages", "", "A list of languages (programming, markup, etc.), narrowing the list of files in the calculation; many restrictions are separated by commas, for example 'go,markdown'")
-	rootCmd.PersistentFlags().String("exclude", "", "A set of Glob patterns excluding files from the calculation, for example 'foo/*,bar/*'")
-	rootCmd.PersistentFlags().String("restrict-to", "", "A set of Glob patterns that excludes all files that do not satisfy any of the patterns in the set")
+	rootCmd.Flags().StringVar(&repository, "repository", "./", "The path to the Git repository")
+	rootCmd.Flags().StringVar(&revision, "revision", "HEAD", "A pointer to a commit")
+	rootCmd.Flags().StringVar(&order_by, "order-by", "default", "The method of sorting the results; one of: lines (default), commits, files")
+	rootCmd.Flags().BoolVar(&use_committer, "use-committer", false, "A Boolean flag that replaces the author (default) with the committer in the calculations")
+	rootCmd.Flags().StringVar(&format, "format", "tabular", "Output format; one of tabular (default), csv, json, json-lines")
+	rootCmd.Flags().String("extensions", "", "A list of extensions that narrows down the list of files in the calculation; many restrictions are separated by commas, for example, '.go,.md'")
+	rootCmd.Flags().String("languages", "", "A list of languages (programming, markup, etc.), narrowing the list of files in the calculation; many restrictions are separated by commas, for example 'go,markdown'")
+	rootCmd.Flags().String("exclude", "", "A set of Glob patterns excluding files from the calculation, for example 'foo/*,bar/*'")
+	//rootCmd.Flags().String("restrict-to", "", "A set of Glob patterns that excludes all files that do not satisfy any of the patterns in the set")
 }
 
-func GitFiles(repository string) ([]string, error) {
-	cmd := exec.Command("git", "ls-tree", "-r", "--name-only", "HEAD")
+func GitFiles(repository string, revision string) ([]string, error) {
+	cmd := exec.Command("git", "ls-tree", "-r", "--name-only", revision)
+	//fmt.Println(revision)
 	cmd.Dir = repository
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -108,8 +157,24 @@ func GitFiles(repository string) ([]string, error) {
 
 	files := make([]string, 0)
 	scanner := bufio.NewScanner(stdout)
+
+	excludeFilesMap := make(map[string]struct{})
+	for _, excl := range exclude {
+		path := repository + "/" + excl
+		if excludeFiles, err := filepath.Glob(path); err != nil {
+			return nil, err
+		} else {
+			for _, excludeFile := range excludeFiles {
+				excludeFilesMap[excludeFile] = struct{}{}
+			}
+		}
+	}
+
 	for scanner.Scan() {
-		files = append(files, scanner.Text())
+		file := scanner.Text()
+		if _, ok := excludeFilesMap[repository+"/"+file]; !ok {
+			files = append(files, file)
+		}
 	}
 
 	return files, nil
@@ -122,10 +187,6 @@ type OutputType struct {
 type SortType struct {
 	name string
 }
-
-//type Change struct {
-//	countGroup int
-//}
 
 type Author struct {
 	name    string
@@ -165,7 +226,9 @@ func parse(files []string) map[string]Author {
 			lines = append(lines, scanner.Text())
 		}
 
-		//hash := ""
+		//fmt.Println(lines)
+
+		commitHash := ""
 		for i, line := range lines {
 			//fmt.Println(line)
 
@@ -178,27 +241,12 @@ func parse(files []string) map[string]Author {
 
 				author := strings.ReplaceAll(line, "author ", "")
 				hash := args[0]
-				//fmt.Println(hash)
-
-				//originalNumberLine, err := strconv.Atoi(args[1])
-				//if err != nil {
-				//	// todo: error
-				//}
-				//
-				//finalNumberLine, err := strconv.Atoi(args[2])
-				//if err != nil {
-				//	// todo: error
-				//}
+				commitHash = args[0]
 
 				countGroup, err := strconv.Atoi(args[3])
 				if err != nil {
 					// todo: error
 				}
-
-				//change := Change{
-				//	hash:       args[0],
-				//	countGroup: countGroup,
-				//}
 
 				if commit, ok := commits[hash]; ok {
 					commit.lines += countGroup
@@ -251,10 +299,12 @@ func parse(files []string) map[string]Author {
 						files:  files,
 					}
 				}
+			} else if use_committer && strings.HasPrefix(line, "committer ") {
+				commit := commits[commitHash]
+				commit.author = strings.ReplaceAll(line, "committer ", "")
+				commits[commitHash] = commit
 			}
 		}
-
-		//fmt.Println("\n\n")
 	}
 
 	authors := make(map[string]Author)
@@ -269,7 +319,7 @@ func parse(files []string) map[string]Author {
 		} else {
 			author := authors[commit.author]
 
-			for file, _ := range commit.files {
+			for file := range commit.files {
 				author.files[file] = struct{}{}
 			}
 
@@ -355,12 +405,9 @@ func GetOutput(authors []Author, outputType OutputType) string {
 }
 
 func GetTabular(authors []Author) string {
-	//return ""
 	buffer := new(bytes.Buffer)
 	writer := tabwriter.NewWriter(buffer, 0, 0, 1, ' ', tabwriter.DiscardEmptyColumns)
-	//writer.Write(make([]string, 0))
 
-	//builder.WriteString("Name         Lines Commits Files")
 	fmt.Fprintf(writer, fmt.Sprintf("Name\tLines\tCommits\tFiles\n"))
 	for _, author := range authors {
 		fmt.Fprintf(writer, fmt.Sprintf("%s\t%d\t%d\t%d\n", author.name, author.lines, author.commits, len(author.files)))
@@ -395,17 +442,24 @@ func GetCSV(authors []Author) string {
 	return strings.TrimSuffix(buffer.String(), "\n")
 }
 
+type JsonFormat struct {
+	name    string
+	lines   int
+	commits int
+	files   int
+}
+
 func GetJsonLines(authors []Author) string {
 	builder := strings.Builder{}
 	for _, author := range authors {
-		lineMap := map[string]string{
-			"name":    author.name,
-			"lines":   strconv.Itoa(author.lines),
-			"commits": strconv.Itoa(author.commits),
-			"files":   strconv.Itoa(len(author.files)),
+		line := &JsonFormat{
+			name:    author.name,
+			lines:   author.lines,
+			commits: author.commits,
+			files:   len(author.files),
 		}
 
-		jsonMap, _ := json.Marshal(lineMap)
+		jsonMap, _ := json.Marshal(line)
 		builder.WriteString(string(jsonMap))
 		builder.WriteString("\n")
 	}
@@ -417,14 +471,14 @@ func GetJson(authors []Author) string {
 	builder := strings.Builder{}
 	builder.WriteString("[")
 	for i, author := range authors {
-		lineMap := map[string]string{
-			"name":    author.name,
-			"lines":   strconv.Itoa(author.lines),
-			"commits": strconv.Itoa(author.commits),
-			"files":   strconv.Itoa(len(author.files)),
+		line := &JsonFormat{
+			name:    author.name,
+			lines:   author.lines,
+			commits: author.commits,
+			files:   len(author.files),
 		}
 
-		jsonMap, _ := json.Marshal(lineMap)
+		jsonMap, _ := json.Marshal(line)
 		builder.WriteString(string(jsonMap))
 
 		if i != len(authors)-1 {
