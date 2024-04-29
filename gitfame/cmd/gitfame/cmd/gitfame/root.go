@@ -309,7 +309,7 @@ func parse(files []string) (map[string]Author, error) {
 				return nil, err
 			}
 
-			if err := cmd.Start(); err != nil {
+			if err = cmd.Start(); err != nil {
 				return nil, err
 			}
 
