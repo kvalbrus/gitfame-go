@@ -69,15 +69,15 @@ func GetSortType(name string) (SortType, error) {
 }
 
 var (
-	repository    string
-	revision      string
-	format        string
-	orderBy       string
-	use_committer bool
-	exclude       []string
-	extensions    []string
-	restrictTo    []string
-	languages     []config.Lang
+	repository   string
+	revision     string
+	format       string
+	orderBy      string
+	useCommitter bool
+	exclude      []string
+	extensions   []string
+	restrictTo   []string
+	languages    []config.Lang
 )
 
 var rootCmd = &cobra.Command{
@@ -100,7 +100,8 @@ var rootCmd = &cobra.Command{
 		}
 
 		if languagesFlag != "" {
-			languageExtensions, err := config.LanguageExtensions()
+			var languageExtensions []config.Lang
+			languageExtensions, err = config.LanguageExtensions()
 			if err != nil {
 				return err
 			}
@@ -178,7 +179,7 @@ func init() {
 	rootCmd.Flags().StringVar(&repository, "repository", "./", "The path to the Git repository")
 	rootCmd.Flags().StringVar(&revision, "revision", "HEAD", "A pointer to a commit")
 	rootCmd.Flags().StringVar(&orderBy, "order-by", "lines", "The method of sorting the results; one of: lines (default), commits, files")
-	rootCmd.Flags().BoolVar(&use_committer, "use-committer", false, "A Boolean flag that replaces the author (default) with the committer in the calculations")
+	rootCmd.Flags().BoolVar(&useCommitter, "use-committer", false, "A Boolean flag that replaces the author (default) with the committer in the calculations")
 	rootCmd.Flags().StringVar(&format, "format", "tabular", "Output format; one of tabular (default), csv, json, json-lines")
 	rootCmd.Flags().String("extensions", "", "A list of extensions that narrows down the list of files in the calculation; many restrictions are separated by commas, for example, '.go,.md'")
 	rootCmd.Flags().String("languages", "", "A list of languages (programming, markup, etc.), narrowing the list of files in the calculation; many restrictions are separated by commas, for example 'go,markdown'")
@@ -196,7 +197,7 @@ func GitFiles(repository string, revision string) ([]string, error) {
 		return nil, err
 	}
 
-	if err := cmd.Start(); err != nil {
+	if err = cmd.Start(); err != nil {
 		return nil, err
 	}
 
@@ -235,11 +236,11 @@ func GitFiles(repository string, revision string) ([]string, error) {
 		files = append(files, scanner.Text())
 	}
 
-	if err := scanner.Err(); err != nil {
+	if err = scanner.Err(); err != nil {
 		return nil, err
 	}
 
-	if err := cmd.Wait(); err != nil {
+	if err = cmd.Wait(); err != nil {
 		return nil, err
 	}
 
@@ -287,7 +288,7 @@ func parse(files []string) (map[string]Author, error) {
 			return nil, err
 		}
 
-		if err := cmd.Start(); err != nil {
+		if err = cmd.Start(); err != nil {
 			return nil, err
 		}
 
@@ -303,7 +304,7 @@ func parse(files []string) (map[string]Author, error) {
 
 			cmd.Dir = repository
 
-			stdout, err := cmd.StdoutPipe()
+			stdout, err = cmd.StdoutPipe()
 			if err != nil {
 				return nil, err
 			}
@@ -313,7 +314,6 @@ func parse(files []string) (map[string]Author, error) {
 			}
 
 			scanner := bufio.NewScanner(stdout)
-			lines := make([]string, 0)
 			for scanner.Scan() {
 				lines = append(lines, scanner.Text())
 			}
@@ -337,24 +337,6 @@ func parse(files []string) (map[string]Author, error) {
 					files:  files,
 				}
 			}
-
-			//if commit, ok := commits[revision]; ok {
-			//	commit.files[file] = struct{}{}
-			//
-			//	commits[revision] = commit
-			//} else {
-			//	files := make(map[string]struct{})
-			//	files[file] = struct{}{}
-			//
-			//	commits[revision] = Commit{
-			//		hash:   revision,
-			//		author: "",
-			//		lines:  0,
-			//		files:  files,
-			//	}
-			//}
-			//
-			//continue
 		}
 
 		commitHash := ""
@@ -427,7 +409,7 @@ func parse(files []string) (map[string]Author, error) {
 						files:  files,
 					}
 				}
-			} else if use_committer && strings.HasPrefix(line, "committer ") {
+			} else if useCommitter && strings.HasPrefix(line, "committer ") {
 				commit := commits[commitHash]
 				commit.author = strings.ReplaceAll(line, "committer ", "")
 				commits[commitHash] = commit
@@ -540,9 +522,9 @@ func GetOutput(authors []Author, outputType OutputType) string {
 	case CSV:
 		return GetCSV(authors)
 	case JSON:
-		return GetJson(authors)
+		return GetJSON(authors)
 	case JSONLINES:
-		return GetJsonLines(authors)
+		return GetJSONLines(authors)
 	}
 
 	return ""
@@ -554,7 +536,7 @@ func GetTabular(authors []Author) string {
 
 	fmt.Fprintf(writer, "Name\tLines\tCommits\tFiles\n")
 	for i, author := range authors {
-		fmt.Fprintf(writer, fmt.Sprintf("%s\t%d\t%d\t%d", author.name, author.lines, author.commits, len(author.files)))
+		fmt.Fprintf(writer, "%s\t%d\t%d\t%d", author.name, author.lines, author.commits, len(author.files))
 
 		if i != len(authors)-1 {
 			fmt.Fprintf(writer, "\n")
@@ -590,17 +572,17 @@ func GetCSV(authors []Author) string {
 	return strings.TrimSuffix(buffer.String(), "\n")
 }
 
-type JsonFormat struct {
+type JSONFormat struct {
 	Name    string `json:"name"`
 	Lines   int    `json:"lines"`
 	Commits int    `json:"commits"`
 	Files   int    `json:"files"`
 }
 
-func GetJsonLines(authors []Author) string {
+func GetJSONLines(authors []Author) string {
 	builder := strings.Builder{}
 	for _, author := range authors {
-		line := &JsonFormat{
+		line := &JSONFormat{
 			Name:    author.name,
 			Lines:   author.lines,
 			Commits: author.commits,
@@ -615,11 +597,11 @@ func GetJsonLines(authors []Author) string {
 	return builder.String()
 }
 
-func GetJson(authors []Author) string {
+func GetJSON(authors []Author) string {
 	builder := strings.Builder{}
 	builder.WriteString("[")
 	for i, author := range authors {
-		line := &JsonFormat{
+		line := &JSONFormat{
 			Name:    author.name,
 			Lines:   author.lines,
 			Commits: author.commits,

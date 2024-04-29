@@ -20,8 +20,9 @@ func (rules *PatternRules) Sweep(files []string) ([]string, error) {
 		flag := true
 		for exc := range rules.ExcludePatterns {
 			if matched, err := regexp.MatchString(exc, file); err != nil {
-				exc = regexp.QuoteMeta(exc)
-				if matched, err = regexp.MatchString(exc, file); err != nil {
+				if matched, err = regexp.MatchString(regexp.QuoteMeta(exc), file); err != nil {
+					return nil, err
+				} else if matched {
 					flag = false
 					break
 				}
@@ -66,9 +67,9 @@ func (rules *PatternRules) Sweep(files []string) ([]string, error) {
 			flag := false
 			for incl := range rules.IncludePatterns {
 				if matched, err := regexp.MatchString(incl, file); err != nil {
-					incl = regexp.QuoteMeta(incl)
-					matched, err = regexp.MatchString(incl, file)
-					if matched {
+					if matched, err = regexp.MatchString(regexp.QuoteMeta(incl), file); err != nil {
+						return nil, err
+					} else if matched {
 						flag = true
 						break
 					}
