@@ -1,4 +1,4 @@
-package cmd
+package gitfame
 
 import (
 	"bufio"
@@ -8,8 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/spf13/cobra"
+	"gitlab.com/slon/shad-go/gitfame/cmd/gitfame/config"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,7 +43,7 @@ func GetOutputType(name string) (OutputType, error) {
 }
 
 var (
-	DEFAULT SortType = SortType{name: "default"}
+	//DEFAULT SortType = SortType{name: "default"}
 	LINES   SortType = SortType{name: "lines"}
 	COMMITS SortType = SortType{name: "commits"}
 	FILES   SortType = SortType{name: "files"}
@@ -51,8 +51,8 @@ var (
 
 func GetSortType(name string) (SortType, error) {
 	switch name {
-	case DEFAULT.name:
-		return DEFAULT, nil
+	//case DEFAULT.name:
+	//	return DEFAULT, nil
 
 	case LINES.name:
 		return LINES, nil
@@ -64,7 +64,7 @@ func GetSortType(name string) (SortType, error) {
 		return FILES, nil
 
 	default:
-		return DEFAULT, errors.New("illegal type")
+		return LINES, errors.New("illegal type")
 	}
 }
 
@@ -75,7 +75,9 @@ var (
 	order_by      string
 	use_committer bool
 	exclude       []string
-	//restrict_to   []string
+	extensions    []string
+	restrict_to   []string
+	languages     []config.Lang
 )
 
 var rootCmd = &cobra.Command{
@@ -83,16 +85,52 @@ var rootCmd = &cobra.Command{
 	Short: "This program prints the statistics of the author of the git repository",
 	Long:  "This program prints the statistics of the author of the git repository",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		//repository = filepath.FromSlash(repository)
-		//fmt.Println(repository)
-		//repository = strings.Replace(repository, "./", "", 1)
+		extensionsFlag, err := cmd.Flags().GetString("extensions")
+		if err != nil {
+			return err
+		}
+
+		if extensionsFlag != "" {
+			extensions = strings.Split(extensionsFlag, ",")
+		}
+
+		languagesFlag, err := cmd.Flags().GetString("languages")
+		if err != nil {
+			return err
+		}
+
+		if languagesFlag != "" {
+			languageExtensions, err := config.LanguageExtensions()
+			if err != nil {
+				return err
+			}
+
+			for _, lang := range strings.Split(languagesFlag, ",") {
+				for _, langExt := range languageExtensions {
+					if strings.ToLower(langExt.Name) == strings.ToLower(lang) {
+						languages = append(languages, langExt)
+					}
+				}
+			}
+		}
 
 		excludeFlag, err := cmd.Flags().GetString("exclude")
 		if err != nil {
 			return err
 		}
 
-		exclude = strings.Split(excludeFlag, ",")
+		if excludeFlag != "" {
+			exclude = strings.Split(excludeFlag, ",")
+		}
+
+		restrictToFlag, err := cmd.Flags().GetString("restrict-to")
+		if err != nil {
+			return err
+		}
+
+		if restrictToFlag != "" {
+			restrict_to = strings.Split(restrictToFlag, ",")
+		}
 
 		files, err := GitFiles(repository, revision)
 		if err != nil {
@@ -116,7 +154,13 @@ var rootCmd = &cobra.Command{
 		//restrict_to = strings.Split(restrictToFlag, ",")
 
 		authors := make([]Author, 0)
-		for _, author := range parse(files) {
+
+		parseAuthors, err := parse(files)
+		if err != nil {
+			return err
+		}
+
+		for _, author := range parseAuthors {
 			authors = append(authors, author)
 		}
 
@@ -133,19 +177,20 @@ func Execute() error {
 func init() {
 	rootCmd.Flags().StringVar(&repository, "repository", "./", "The path to the Git repository")
 	rootCmd.Flags().StringVar(&revision, "revision", "HEAD", "A pointer to a commit")
-	rootCmd.Flags().StringVar(&order_by, "order-by", "default", "The method of sorting the results; one of: lines (default), commits, files")
+	rootCmd.Flags().StringVar(&order_by, "order-by", "lines", "The method of sorting the results; one of: lines (default), commits, files")
 	rootCmd.Flags().BoolVar(&use_committer, "use-committer", false, "A Boolean flag that replaces the author (default) with the committer in the calculations")
 	rootCmd.Flags().StringVar(&format, "format", "tabular", "Output format; one of tabular (default), csv, json, json-lines")
 	rootCmd.Flags().String("extensions", "", "A list of extensions that narrows down the list of files in the calculation; many restrictions are separated by commas, for example, '.go,.md'")
 	rootCmd.Flags().String("languages", "", "A list of languages (programming, markup, etc.), narrowing the list of files in the calculation; many restrictions are separated by commas, for example 'go,markdown'")
 	rootCmd.Flags().String("exclude", "", "A set of Glob patterns excluding files from the calculation, for example 'foo/*,bar/*'")
-	//rootCmd.Flags().String("restrict-to", "", "A set of Glob patterns that excludes all files that do not satisfy any of the patterns in the set")
+	rootCmd.Flags().String("restrict-to", "", "A set of Glob patterns that excludes all files that do not satisfy any of the patterns in the set")
 }
 
 func GitFiles(repository string, revision string) ([]string, error) {
 	cmd := exec.Command("git", "ls-tree", "-r", "--name-only", revision)
 	//fmt.Println(revision)
 	cmd.Dir = repository
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -158,23 +203,49 @@ func GitFiles(repository string, revision string) ([]string, error) {
 	files := make([]string, 0)
 	scanner := bufio.NewScanner(stdout)
 
-	excludeFilesMap := make(map[string]struct{})
-	for _, excl := range exclude {
-		path := repository + "/" + excl
-		if excludeFiles, err := filepath.Glob(path); err != nil {
-			return nil, err
-		} else {
-			for _, excludeFile := range excludeFiles {
-				excludeFilesMap[excludeFile] = struct{}{}
-			}
+	excPatterns := make(map[string]struct{})
+	inclPatterns := make(map[string]struct{})
+	langPatterns := make(map[string]struct{})
+
+	for _, exc := range exclude {
+		excPatterns[exc] = struct{}{}
+	}
+
+	for _, language := range languages {
+		for _, incl := range language.Extensions {
+			langPatterns[incl] = struct{}{}
 		}
 	}
 
+	for _, incl := range extensions {
+		langPatterns[incl] = struct{}{}
+	}
+
+	for _, incl := range restrict_to {
+		inclPatterns[incl] = struct{}{}
+	}
+
+	patternRules := &PatternRules{
+		IncludePatterns:   inclPatterns,
+		ExcludePatterns:   excPatterns,
+		LanguagesPatterns: langPatterns,
+	}
+
 	for scanner.Scan() {
-		file := scanner.Text()
-		if _, ok := excludeFilesMap[repository+"/"+file]; !ok {
-			files = append(files, file)
-		}
+		files = append(files, scanner.Text())
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	if err := cmd.Wait(); err != nil {
+		return nil, err
+	}
+
+	files, err = patternRules.Sweep(files)
+	if err != nil {
+		return nil, err
 	}
 
 	return files, nil
@@ -203,21 +274,21 @@ type Commit struct {
 	//change Change
 }
 
-func parse(files []string) map[string]Author {
+func parse(files []string) (map[string]Author, error) {
 
 	commits := make(map[string]Commit)
 	for _, file := range files {
 		//fmt.Println(file)
-		cmd := exec.Command("git", "blame", "-p", file)
+		cmd := exec.Command("git", "blame", "-p", revision, "--", file)
 		cmd.Dir = repository
 
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
-			return nil
+			return nil, err
 		}
 
 		if err := cmd.Start(); err != nil {
-			return nil
+			return nil, err
 		}
 
 		scanner := bufio.NewScanner(stdout)
@@ -226,12 +297,69 @@ func parse(files []string) map[string]Author {
 			lines = append(lines, scanner.Text())
 		}
 
-		//fmt.Println(lines)
+		if len(lines) == 0 {
+			cmd := exec.Command("git", "log", "-1", "--pretty=format:%H\n%an", revision, "--", file)
+			cmd.Dir = repository
+
+			cmd.Dir = repository
+
+			stdout, err := cmd.StdoutPipe()
+			if err != nil {
+				return nil, err
+			}
+
+			if err := cmd.Start(); err != nil {
+				return nil, err
+			}
+
+			scanner := bufio.NewScanner(stdout)
+			lines := make([]string, 0)
+			for scanner.Scan() {
+				lines = append(lines, scanner.Text())
+			}
+
+			//line := strings.Split(lines[0], ";")
+
+			hash, author := lines[0], lines[1]
+
+			if commit, ok := commits[hash]; ok {
+				commit.files[file] = struct{}{}
+
+				commits[hash] = commit
+			} else {
+				files := make(map[string]struct{})
+				files[file] = struct{}{}
+
+				commits[hash] = Commit{
+					hash:   hash,
+					author: author,
+					lines:  0,
+					files:  files,
+				}
+			}
+
+			//if commit, ok := commits[revision]; ok {
+			//	commit.files[file] = struct{}{}
+			//
+			//	commits[revision] = commit
+			//} else {
+			//	files := make(map[string]struct{})
+			//	files[file] = struct{}{}
+			//
+			//	commits[revision] = Commit{
+			//		hash:   revision,
+			//		author: "",
+			//		lines:  0,
+			//		files:  files,
+			//	}
+			//}
+			//
+			//continue
+		}
 
 		commitHash := ""
 		for i, line := range lines {
 			//fmt.Println(line)
-
 			if strings.HasPrefix(line, "author ") && i != 0 {
 				previousLine := lines[i-1]
 				args := strings.Split(previousLine, " ")
@@ -334,56 +462,72 @@ func parse(files []string) map[string]Author {
 		}
 	}
 
+	return authors, nil
+}
+
+func Sort1(authors []Author, sort1 SortType, sort2 SortType, sort3 SortType) []Author {
+	sort.Slice(authors, func(i, j int) bool {
+		var a, b int
+		switch sort1 {
+		case LINES:
+			a, b = authors[i].lines, authors[j].lines
+
+		case COMMITS:
+			a, b = authors[i].commits, authors[j].commits
+
+		case FILES:
+			a, b = len(authors[i].files), len(authors[j].files)
+		}
+
+		if a == b {
+			switch sort2 {
+			case LINES:
+				a, b = authors[i].lines, authors[j].lines
+
+			case COMMITS:
+				a, b = authors[i].commits, authors[j].commits
+
+			case FILES:
+				a, b = len(authors[i].files), len(authors[j].files)
+			}
+
+			if a == b {
+				switch sort3 {
+				case LINES:
+					a, b = authors[i].lines, authors[j].lines
+
+				case COMMITS:
+					a, b = authors[i].commits, authors[j].commits
+
+				case FILES:
+					a, b = len(authors[i].files), len(authors[j].files)
+				}
+
+				if a == b {
+					return strings.Compare(authors[i].name, authors[j].name) < 0
+				} else {
+					return a > b
+				}
+			} else {
+				return a > b
+			}
+
+		} else {
+			return a > b
+		}
+	})
+
 	return authors
 }
 
 func Sort(authors []Author, sortType SortType) []Author {
 	switch sortType {
-	case DEFAULT:
-		sort.Slice(authors, func(i, j int) bool {
-			authorI, authorJ := authors[i], authors[j]
-
-			if authorI.lines == authorJ.lines {
-				if authorI.commits == authorJ.commits {
-					if len(authorI.files) == len(authorJ.files) {
-						return strings.Compare(authorI.name, authorJ.name) < 0
-					}
-
-					return len(authorI.files) > len(authorJ.files)
-				}
-
-				return authorI.commits > authorJ.commits
-			}
-
-			return authorI.lines > authorJ.lines
-		})
-
 	case COMMITS:
-		sort.Slice(authors, func(i, j int) bool {
-			if authors[i].commits == authors[j].commits {
-				return strings.Compare(authors[i].name, authors[j].name) < 0
-			}
-
-			return authors[i].commits > authors[j].commits
-		})
-
-	case FILES:
-		sort.Slice(authors, func(i, j int) bool {
-			if len(authors[i].files) == len(authors[j].files) {
-				return strings.Compare(authors[i].name, authors[j].name) < 0
-			}
-
-			return len(authors[i].files) > len(authors[j].files)
-		})
-
+		return Sort1(authors, COMMITS, LINES, FILES)
 	case LINES:
-		sort.Slice(authors, func(i, j int) bool {
-			if authors[i].lines == authors[j].lines {
-				return strings.Compare(authors[i].name, authors[j].name) < 0
-			}
-
-			return authors[i].lines > authors[j].lines
-		})
+		return Sort1(authors, LINES, COMMITS, FILES)
+	case FILES:
+		return Sort1(authors, FILES, LINES, COMMITS)
 	}
 
 	return authors
@@ -409,8 +553,12 @@ func GetTabular(authors []Author) string {
 	writer := tabwriter.NewWriter(buffer, 0, 0, 1, ' ', tabwriter.DiscardEmptyColumns)
 
 	fmt.Fprintf(writer, fmt.Sprintf("Name\tLines\tCommits\tFiles\n"))
-	for _, author := range authors {
-		fmt.Fprintf(writer, fmt.Sprintf("%s\t%d\t%d\t%d\n", author.name, author.lines, author.commits, len(author.files)))
+	for i, author := range authors {
+		fmt.Fprintf(writer, fmt.Sprintf("%s\t%d\t%d\t%d", author.name, author.lines, author.commits, len(author.files)))
+
+		if i != len(authors)-1 {
+			fmt.Fprintf(writer, "\n")
+		}
 	}
 
 	writer.Flush()
@@ -443,20 +591,20 @@ func GetCSV(authors []Author) string {
 }
 
 type JsonFormat struct {
-	name    string
-	lines   int
-	commits int
-	files   int
+	Name    string `json:"name"`
+	Lines   int    `json:"lines"`
+	Commits int    `json:"commits"`
+	Files   int    `json:"files"`
 }
 
 func GetJsonLines(authors []Author) string {
 	builder := strings.Builder{}
 	for _, author := range authors {
 		line := &JsonFormat{
-			name:    author.name,
-			lines:   author.lines,
-			commits: author.commits,
-			files:   len(author.files),
+			Name:    author.name,
+			Lines:   author.lines,
+			Commits: author.commits,
+			Files:   len(author.files),
 		}
 
 		jsonMap, _ := json.Marshal(line)
@@ -472,10 +620,10 @@ func GetJson(authors []Author) string {
 	builder.WriteString("[")
 	for i, author := range authors {
 		line := &JsonFormat{
-			name:    author.name,
-			lines:   author.lines,
-			commits: author.commits,
-			files:   len(author.files),
+			Name:    author.name,
+			Lines:   author.lines,
+			Commits: author.commits,
+			Files:   len(author.files),
 		}
 
 		jsonMap, _ := json.Marshal(line)
