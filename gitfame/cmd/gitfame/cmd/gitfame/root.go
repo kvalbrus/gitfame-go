@@ -17,10 +17,10 @@ import (
 )
 
 var (
-	TABULAR    OutputType = OutputType{name: "tabular"}
-	CSV        OutputType = OutputType{name: "csv"}
-	JSON       OutputType = OutputType{name: "json"}
-	JSON_LINES OutputType = OutputType{name: "json-lines"}
+	TABULAR   OutputType = OutputType{name: "tabular"}
+	CSV       OutputType = OutputType{name: "csv"}
+	JSON      OutputType = OutputType{name: "json"}
+	JSONLINES OutputType = OutputType{name: "json-lines"}
 )
 
 func GetOutputType(name string) (OutputType, error) {
@@ -34,8 +34,8 @@ func GetOutputType(name string) (OutputType, error) {
 	case JSON.name:
 		return JSON, nil
 
-	case JSON_LINES.name:
-		return JSON_LINES, nil
+	case JSONLINES.name:
+		return JSONLINES, nil
 
 	default:
 		return TABULAR, errors.New("illegal type")
@@ -72,11 +72,11 @@ var (
 	repository    string
 	revision      string
 	format        string
-	order_by      string
+	orderBy       string
 	use_committer bool
 	exclude       []string
 	extensions    []string
-	restrict_to   []string
+	restrictTo    []string
 	languages     []config.Lang
 )
 
@@ -107,7 +107,7 @@ var rootCmd = &cobra.Command{
 
 			for _, lang := range strings.Split(languagesFlag, ",") {
 				for _, langExt := range languageExtensions {
-					if strings.ToLower(langExt.Name) == strings.ToLower(lang) {
+					if strings.EqualFold(langExt.Name, lang) {
 						languages = append(languages, langExt)
 					}
 				}
@@ -129,7 +129,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		if restrictToFlag != "" {
-			restrict_to = strings.Split(restrictToFlag, ",")
+			restrictTo = strings.Split(restrictToFlag, ",")
 		}
 
 		files, err := GitFiles(repository, revision)
@@ -142,16 +142,16 @@ var rootCmd = &cobra.Command{
 			return err
 		}
 
-		sortType, err := GetSortType(order_by)
+		sortType, err := GetSortType(orderBy)
 		if err != nil {
 			return err
 		}
-		//restrictToFlag, err := cmd.Flags().GetString("restrict_to")
+		//restrictToFlag, err := cmd.Flags().GetString("restrictTo")
 		//if err != nil {
 		//	return err
 		//}
 
-		//restrict_to = strings.Split(restrictToFlag, ",")
+		//restrictTo = strings.Split(restrictToFlag, ",")
 
 		authors := make([]Author, 0)
 
@@ -177,7 +177,7 @@ func Execute() error {
 func init() {
 	rootCmd.Flags().StringVar(&repository, "repository", "./", "The path to the Git repository")
 	rootCmd.Flags().StringVar(&revision, "revision", "HEAD", "A pointer to a commit")
-	rootCmd.Flags().StringVar(&order_by, "order-by", "lines", "The method of sorting the results; one of: lines (default), commits, files")
+	rootCmd.Flags().StringVar(&orderBy, "order-by", "lines", "The method of sorting the results; one of: lines (default), commits, files")
 	rootCmd.Flags().BoolVar(&use_committer, "use-committer", false, "A Boolean flag that replaces the author (default) with the committer in the calculations")
 	rootCmd.Flags().StringVar(&format, "format", "tabular", "Output format; one of tabular (default), csv, json, json-lines")
 	rootCmd.Flags().String("extensions", "", "A list of extensions that narrows down the list of files in the calculation; many restrictions are separated by commas, for example, '.go,.md'")
@@ -221,7 +221,7 @@ func GitFiles(repository string, revision string) ([]string, error) {
 		langPatterns[incl] = struct{}{}
 	}
 
-	for _, incl := range restrict_to {
+	for _, incl := range restrictTo {
 		inclPatterns[incl] = struct{}{}
 	}
 
@@ -364,7 +364,7 @@ func parse(files []string) (map[string]Author, error) {
 				previousLine := lines[i-1]
 				args := strings.Split(previousLine, " ")
 				if len(args) != 4 {
-					// todo: error
+					return nil, err
 				}
 
 				author := strings.ReplaceAll(line, "author ", "")
@@ -373,7 +373,7 @@ func parse(files []string) (map[string]Author, error) {
 
 				countGroup, err := strconv.Atoi(args[3])
 				if err != nil {
-					// todo: error
+					return nil, err
 				}
 
 				if commit, ok := commits[hash]; ok {
@@ -408,7 +408,7 @@ func parse(files []string) (map[string]Author, error) {
 
 				countGroup, err := strconv.Atoi(args[3])
 				if err != nil {
-					// todo: error
+					return nil, err
 				}
 
 				if commit, ok := commits[hash]; ok {
@@ -541,7 +541,7 @@ func GetOutput(authors []Author, outputType OutputType) string {
 		return GetCSV(authors)
 	case JSON:
 		return GetJson(authors)
-	case JSON_LINES:
+	case JSONLINES:
 		return GetJsonLines(authors)
 	}
 
@@ -552,7 +552,7 @@ func GetTabular(authors []Author) string {
 	buffer := new(bytes.Buffer)
 	writer := tabwriter.NewWriter(buffer, 0, 0, 1, ' ', tabwriter.DiscardEmptyColumns)
 
-	fmt.Fprintf(writer, fmt.Sprintf("Name\tLines\tCommits\tFiles\n"))
+	fmt.Fprintf(writer, "Name\tLines\tCommits\tFiles\n")
 	for i, author := range authors {
 		fmt.Fprintf(writer, fmt.Sprintf("%s\t%d\t%d\t%d", author.name, author.lines, author.commits, len(author.files)))
 

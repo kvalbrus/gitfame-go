@@ -21,8 +21,7 @@ func (rules *PatternRules) Sweep(files []string) ([]string, error) {
 		for exc := range rules.ExcludePatterns {
 			if matched, err := regexp.MatchString(exc, file); err != nil {
 				exc = regexp.QuoteMeta(exc)
-				matched, err = regexp.MatchString(exc, file)
-				if matched {
+				if matched, err = regexp.MatchString(exc, file); err != nil {
 					flag = false
 					break
 				}
